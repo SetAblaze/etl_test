@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: stg_support_tickets
+    description: "Staging таблица для тикетов службы поддержки"
+    columns:
+      - name: ticket_id
+        tests: [not_null, unique]
+      - name: created_at
+        tests: [not_null]
+      - name: category
+        tests: [not_null]
+  - name: kpi_daily
+    description: "KPI по дням: среднее время решения/первого ответа, удовлетворённость, доля повторных обращений"
+    columns:
+      - name: date
+        tests: [not_null]
+  - name: category_daily
+    description: "Распределение тикетов по категориям по дням"
+    columns:
+      - name: date
+        tests: [not_null]
+      - name: category
+        tests: [not_null]
+  - name: agent_ranking
+    description: "Рейтинг специалистов по композитному скору (время, удовлетворённость, повторы)"
+    columns:
+      - name: agent_id
+        tests: [not_null]

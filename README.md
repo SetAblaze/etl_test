@@ -1,144 +1,193 @@
-Support Analytics — Airflow + dbt (Docker)
-Цель работы
+# Support Analytics — Airflow + dbt (Docker)
 
-Построить минимальный ELT-конвейер для аналитики службы поддержки на датасете имитации заявок, автоматизировать загрузку и преобразования с помощью Airflow и dbt, получить витрины для метрик и отчётов.
+> Минимальный ELT-конвейер для аналитики службы поддержки: загрузка заявок, трансформации в dbt и оркестрация в Airflow. Результат — витрины для KPI, распределения по категориям и рейтинга специалистов.
 
-Выбранный вариант выполнения
+---
 
-Вариант: Docker.
-Причины выбора:
+## Содержание
 
-локальная reproducible-среда без аккаунта в облаке;
+- [Цель](#цель)
+- [Вариант выполнения](#вариант-выполнения)
+- [Архитектура решения](#архитектура-решения)
+- [Данные](#данные)
+- [Модели / витрины](#модели--витрины)
+- [Структура репозитория](#структура-репозитория)
+- [Быстрый запуск](#быстрый-запуск)
+- [Проверка результата](#проверка-результата)
+- [Скриншоты](#скриншоты)
+- [Траблшутинг](#траблшутинг)
+- [Выводы](#выводы)
 
-быстрый старт (всё поднимается docker-compose’ом);
+---
 
-удобно дебажить dbt и Airflow в одних контейнерах.
+## Цель
 
-Краткое описание решения (архитектура ELT)
-CSV (seed) ──► dbt seed ──► Postgres.raw        (schema: dbt_transformed_raw_data)
-                               │
-                               └─► dbt models (views):
-                                   • stg_support_tickets            – стейджинг
-                                   • kpi_daily                      – ежедневные KPI
-                                   • category_daily                 – обращения по категориям
-                                   • agent_ranking                  – рейтинг специалистов
-                                   (schema: dbt_transformed_dbt_transformed)
-Airflow DAG (BashOperator):
-  dbt_seed  →  dbt_run  →  dbt_test
+Построить минимальный ELT-конвейер для анализа обращений в поддержку на имитационном датасете: автоматически загрузить данные, преобразовать их в витрины и подтвердить качество тестами dbt.
 
+---
 
-Данные. Использован датасет Bitext Sample Customer Service (training/validation/testing CSV). В работе использовался столбец category (и сопутствующие поля), из него строились агрегаты.
+## Вариант выполнения
 
-Витрины (views):
+**Вариант:** Docker.
 
-stg_support_tickets — очищение/приведение типов;
+**Почему так:**
+- локальная среда без облачного аккаунта;
+- быстрый старт через `docker compose`;
+- удобно дебажить Airflow и dbt в одних контейнерах.
 
-kpi_daily(date, tickets, avg_resolution_hours, avg_first_response_hours, avg_satisfaction, repeat_rate);
+---
 
-category_daily(date, category, tickets);
+## Архитектура решения
 
-agent_ranking(agent_id, tickets, avg_resolution_hours, avg_satisfaction, repeat_rate, score) — свод по агентам с интегральным скором.
+```mermaid
+flowchart LR
+    A[CSV seed<br/>support_tickets.csv] -->|dbt seed| B[(Postgres<br/>schema: dbt_transformed_raw_data)]
+    B -->|dbt run (views)| C[stg_support_tickets]
+    C --> D[kpi_daily]
+    C --> E[category_daily]
+    C --> F[agent_ranking]
 
-База: Postgres (БД warehouse).
+    subgraph Airflow DAG
+    S[dbt_seed] --> R[dbt_run] --> T[dbt_test]
+    end
+```
 
-Структура репозитория
+- **Хранилище:** PostgreSQL (БД `warehouse`)
+- **Схемы:**
+  - `dbt_transformed_raw_data` — сырые таблицы/сиды
+  - `dbt_transformed_dbt_transformed` — представления (витрины)
+
+---
+
+## Данные
+
+Использован датасет **Bitext Sample Customer Service** (части training/validation/testing CSV).  
+В работе задействованы тексты/интенты и, главным образом, колонка **`category`** — по ней строятся агрегаты.
+
+---
+
+## Модели / витрины
+
+- `stg_support_tickets` — стейджинг: чистка/приведение типов
+- `kpi_daily(date, tickets, avg_resolution_hours, avg_first_response_hours, avg_satisfaction, repeat_rate)`
+- `category_daily(date, category, tickets)`
+- `agent_ranking(agent_id, tickets, avg_resolution_hours, avg_satisfaction, repeat_rate, score)` — интегральная оценка по агентам  
+  *(формула агрегации смотрите в `models/marts/agent_ranking.sql` проекта dbt)*
+
+---
+
+## Структура репозитория
+
+```
 .
-├─ docker-compose.yml
-├─ airflow/
-│  └─ dags/
-│     └─ support_analytics_dag.py        # DAG: dbt_seed → dbt_run → dbt_test
-├─ dbt/
-│  └─ support_analytics/
-│     ├─ dbt_project.yml
-│     ├─ models/
-│     │  ├─ staging/stg_support_tickets.sql
-│     │  └─ marts/{kpi_daily.sql, category_daily.sql, agent_ranking.sql}
-│     ├─ seeds/support_tickets.csv       # объединённый seed из CSV
-│     └─ .dbt/profiles.yml               # профиль подключения к Postgres
-├─ scripts/start.bat (опционально)
-└─ screenshots/
-   ├─ airflow_dag_success.png            # скрин графа DAG
-   └─ dbeaver_kpi_daily.png              # скрин витрины в DBeaver/pgAdmin
+├── docker-compose.yml
+├── dags/
+│   └── support_analytics_dag.py        # Airflow: dbt_seed → dbt_run → dbt_test
+├── dbt/
+│   └── support_analytics/
+│       ├── dbt_project.yml
+│       ├── models/
+│       │   ├── staging/stg_support_tickets.sql
+│       │   └── marts/
+│       │       ├── kpi_daily.sql
+│       │       ├── category_daily.sql
+│       │       └── agent_ranking.sql
+│       ├── seeds/support_tickets.csv   # объединённый seed
+│       └── .dbt/profiles.yml           # профиль подключения к Postgres
+├── postgres-init/                      # (если есть) инициализация БД
+├── scripts/
+│   ├── start.bat                       # опционально: запуск для Windows
+│   └── stop.bat
+└── screenshots/
+    ├── airflow_dag_success.png         # граф DAG
+    └── dbeaver_kpi_daily.png           # витрина в DBeaver/pgAdmin
+```
 
+> **Примечание:** каталоги `dbt/**/target`, `dbt/**/logs`, `dbt/**/dbt_packages` держите в `.gitignore`.
 
-Названия/пути могут отличаться — подстрой под свой репозиторий.
+---
 
-Инструкция по запуску
-Предварительно
+## Быстрый запуск
 
-Установить Docker Desktop (WSL2 включён).
+### Предварительно
+1. Установите **Docker Desktop** (WSL2 включён).
+2. Свободен порт **5432** (в compose проброшен `5432:5432` для `postgres`).
 
-Порт 5432 должен быть проброшен наружу (в compose: ports: ["5432:5432"] для сервиса postgres).
-
-1) Поднять инфраструктуру
+### Поднять инфраструктуру
+```bash
 docker compose down -v
 docker compose up -d
+```
 
-2) (Если нужно) установить git в контейнерах Airflow
+### (Опционально) Проверка/установка `git` внутри Airflow
 
-Иногда dbt требует git. Если dbt debug ругается на git — выполнить:
+Если `dbt debug` ругается на отсутствие `git` (нужно для некоторых пакетов dbt):
 
+```bash
 docker compose exec --user root airflow-webserver  bash -lc "apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*"
 docker compose exec --user root airflow-scheduler bash -lc "apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*"
+```
 
-3) Проверить dbt из контейнера
+### Прогнать dbt руками (быстрый sanity-check)
+```bash
 docker compose exec airflow-webserver bash -lc "cd /opt/airflow/dbt/support_analytics && dbt debug && dbt seed && dbt run && dbt test"
+```
 
+### Запустить DAG в Airflow
+1. Откройте **http://localhost:8080** (логин/пароль: `admin/admin`).
+2. Найдите `support_analytics_dbt`, включите и нажмите **Trigger DAG**.
+3. Дождитесь зелёной цепочки **dbt_seed → dbt_run → dbt_test**.
 
-Должны отработать seed/run/test без ошибок.
+---
 
-4) Запустить DAG в Airflow
+## Проверка результата
 
-Открыть http://localhost:8080
- (логин/пароль: admin/admin).
+### DBeaver / pgAdmin (Postgres)
 
-Найти DAG support_analytics_dbt, включить и Trigger DAG.
+Параметры подключения:
+- **Host:** `localhost`
+- **Port:** `5432`
+- **Database:** `warehouse`
+- **User:** `postgres`
+- **Password:** `postgres`
 
-Убедиться, что задачи dbt_seed → dbt_run → dbt_test зелёные.
+Ищите витрины в схеме **`dbt_transformed_dbt_transformed`**.
 
-5) Проверка витрин (DBeaver/pgAdmin)
+### Пример запроса
 
-Подключение: host localhost, port 5432, db warehouse, user postgres, pass postgres (как в compose).
-Схема: dbt_transformed_dbt_transformed → открыть kpi_daily, category_daily, agent_ranking.
-
-6) SQL для быстрой проверки
+```sql
+-- работать в целевой схеме
 SET search_path TO dbt_transformed_dbt_transformed;
 
 -- последние 20 дней KPI
-SELECT * FROM kpi_daily ORDER BY date DESC LIMIT 20;
+SELECT * FROM kpi_daily
+ORDER BY date DESC
+LIMIT 20;
 
--- категории за апрель 2024
+-- распределение по категориям за апрель 2024
 SELECT category, SUM(tickets) AS tickets_apr_2024
 FROM category_daily
 WHERE date >= DATE '2024-04-01' AND date < DATE '2024-05-01'
 GROUP BY category
 ORDER BY tickets_apr_2024 DESC;
 
--- топ-агенты по скору
-SELECT * FROM agent_ranking ORDER BY score DESC NULLS LAST LIMIT 10;
+-- топ-10 агентов по интегральному скору
+SELECT * FROM agent_ranking
+ORDER BY score DESC NULLS LAST
+LIMIT 10;
+```
 
-Результаты выполнения
-Скриншот 1 — граф DAG (Airflow)
+## Выводы
 
-Скриншот 2 — витрина с преобразованными данными (DBeaver)
+Связка **Airflow + dbt** даёт чёткое разделение ролей:
+- **Airflow** — оркестрация, расписания, зависимости, ретраи и мониторинг.
+- **dbt** — декларативные SQL-модели, документация, тесты качества (например, `not_null`, `unique`) и аккуратная работа со схемами.
 
-Пример сводки по категориям (апрель 2024):
-ACCOUNT — 446; ORDER — 283; REFUND — 205; INVOICE — 150; PAYMENT — 147; SHIPPING_ADDRESS — 147; DELIVERY — 143; FEEDBACK — 136; CONTACT — 134; CANCELLATION_FEE — 78; NEWSLETTER — 66.
+В проекте получены:
+- ежедневные KPI (`kpi_daily`);
+- распределение обращений по категориям (`category_daily`);
+- рейтинг специалистов (`agent_ranking`).
 
-Пример рейтинга агентов (top-3):
-A02 (score≈0.885, низкий repeat_rate≈27%), A07 (≈0.761, высокий CSAT≈4.03), A05 (≈0.622, быстрое решение≈35.8 ч, но выше повторные≈31%).
+**Плюсы Docker-варианта:** быстрый локальный старт, независимость от облака, простота отладки.  
+**Минусы:** нет управляемых сервисов и автоскейлинга; доступность/бэкапы нужно проектировать самостоятельно.
 
-Выводы
-
-Связка Airflow + dbt даёт чёткое разделение задач:
-
-Airflow — оркестрация, расписания, зависимости, ретраи и мониторинг;
-
-dbt — декларативные SQL-модели, документация, тесты качества данных (not_null, unique), управление схемами/артефактами.
-
-В рамках проекта получены ежедневные KPI (kpi_daily), распределение по категориям (category_daily) и рейтинг специалистов (agent_ranking) — готовые источники для дашбордов.
-
-Плюсы Docker-варианта: быстрый локальный старт, независимость от облака, простота отладки.
-Минусы по сравнению с GCP: нет управляемых сервисов и автоскейлинга; доступность/бэкапы нужно продумывать самостоятельно.
-
-Следующие шаги: автоматизировать выгрузку CSV/RAW, добавить алёрты по repeat_rate/CSAT, подготовить дашборд (Metabase/Superset/Looker Studio) поверх полученных витрин.

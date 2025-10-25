@@ -1,0 +1,13 @@
+postgres_dwh:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: postgres
+      user: postgres
+      password: postgres
+      port: 5432
+      dbname: warehouse
+      schema: dbt_transformed
+      threads: 4
+      keepalives_idle: 0

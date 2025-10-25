@@ -1,0 +1,17 @@
+name: "support_analytics"
+version: "1.0.0"
+config-version: 2
+
+profile: "postgres_dwh"
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+
+models:
+  support_analytics:
+    +schema: dbt_transformed
+
+seeds:
+  +schema: raw_data
+  +quote_columns: true

@@ -1,0 +1,10 @@
+
+dbt/**/target/
+dbt/**/logs/
+dbt/**/dbt_packages/
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+airflow/logs/
+.env
